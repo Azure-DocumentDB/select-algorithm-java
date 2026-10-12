@@ -1,73 +1,109 @@
 # select-algorithm-java
 
-**Java**. Compare IVF, HNSW, and DiskANN against cosine, L2, and inner-product metrics: nine combinations with sequential index creation, search, and removal.
+Compare **IVF, HNSW and DiskANN × COS, L2 and IP** on Azure DocumentDB using precomputed document **and query** vectors. No Azure OpenAI account, API key, embedding deployment or model quota is required. This is a small-fixture functional comparison, **not a performance, recall or algorithm-selection benchmark**. Raw scores across different metrics are not comparable; a self-query need not rank first under inner product when vectors have different norms.
 
-Standalone extraction of [the upstream sample](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/ai/select-algorithm-java). See [UPSTREAM.md](UPSTREAM.md) for attribution, exact revision, changes, and maintenance policy.
+Standalone downstream of [the Microsoft sample](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/ai/select-algorithm-java). Original [MIT license](LICENSE.md) and [upstream provenance](UPSTREAM.md) are preserved.
 
-## Before you run
+## Safety and prerequisites
 
-Use **Java 17 or newer and Maven**, Git, and Azure CLI or another supported Azure Identity sign-in mechanism.
-Use an existing, explicitly approved disposable Azure DocumentDB environment and an Azure OpenAI embedding deployment compatible with `text-embedding-3-small` and 1536-dimensional vectors.
-Your identity needs appropriate model access and a registered DocumentDB database identity with permissions for the sample operations. Network access must be configured deliberately; signing in alone does not grant database access.
+- **JDK 21+ and Maven 3.9+**, Python 3 for the optional public dependency audit.
+- An explicitly approved, isolated **Azure DocumentDB** database on a tier supporting all three vector indexes. Confirm current tier/region/server-version support before paying for resources. A build/mock test does **not** prove Azure compatibility.
+- Either native database credentials (SCRAM-SHA-256), or an Entra identity independently registered and granted database permissions. `az login` alone does not grant DocumentDB access.
+- Network/firewall access, valid TLS certificates and hostnames. Certificate validation cannot be disabled by an environment flag. Only validated public Azure DocumentDB SRV host suffixes are accepted, **before any credential is created or used**; arbitrary connection URIs and loopback hosts are not accepted by the application.
+- **Writes require `ALLOW_DATABASE_WRITES=true`, an explicit database and collection prefix.** No default `Hotels` target. Reserved system databases and unsafe names are rejected.
 
-**These are cloud-mutating samples, not production services or read-only demos.** They can create/drop indexes, replace/drop collections, and invoke billable models. Some programs hardcode `Hotels` or collection names; an environment-variable change alone is not a universal isolation guarantee.
+The application creates **nine separate collections**, named `<prefix>_<algorithm>_<metric>` (for example `comparison_ivf_cos`, `comparison_diskann_ip`). It only inserts missing fixture IDs (`hotel:<HotelId>`) and creates missing indexes. It never deletes, resets, replaces or drops documents, indexes, collections or databases. Matching existing fixture documents and exact relevant index options are checked on every run, independently of collection size. Conflicts fail that case without changing the conflicting data/index. Unrelated documents are preserved and included in `totalDocuments`; their vectors may participate in searches. Use a dedicated prefix for a meaningful comparison.
 
-Upstream documentation differs on minimum DiskANN tiers and model/API versions. Confirm current service requirements for your selected region and tier; the shared provisioning template currently chooses M40. Do not infer live readiness from source code, saved output, or syntax/build CI.
+Concurrent writers are not supported. A failed batch may leave a subset of newly inserted fixture documents; a rerun verifies those records and inserts only missing IDs. There is no transaction/rollback or automatic cleanup. The resource owner must review and manually clean up disposable resources after testing. This application does not provision anything.
 
-## Setup
+## 1. Prepare data without a model call
 
-Commands below use PowerShell and run from this repository root. They are instructions for a separately approved run; no live run is claimed by this extraction.
+Follow [data/README.md](data/README.md) to download and verify the pinned **50 × 1536** hotel fixture. Create a numeric-array query file from one existing vector for a deterministic smoke query:
 
-### 1. Retrieve the pinned sample data
-
-Follow [data/README.md](data/README.md). It provides explicit downloads, source links, and SHA-256 checks. No data download or model call happens automatically on clone or install.
-
-### 2. Configure the sample
-
-Copy the placeholder-only example, then edit `.env` with your approved resource configuration. Do not commit `.env`.
-
-```powershell
-if (Test-Path -LiteralPath .env) { throw '.env already exists; edit it instead of overwriting it.' }
-Copy-Item -LiteralPath .env.example -Destination .env
+```sh
+python3 scripts/create_query_vector.py data/Hotels_Vector.json data/query-vector.json
 ```
 
-After replacing every `<placeholder>`, import these plain `KEY=value` lines into this PowerShell process. Keep values unquoted and put comments on separate lines; this reads data without executing the file:
+This refuses to overwrite a query file, validates the fixture checksum and dimensions, and writes only a local query vector. It tests vector plumbing, not natural-language understanding. For a semantic query, supply a vector from the **same embedding model/space and dimension** as your documents. This repository intentionally has no optional live-LLM path; model integrations/quota are neither required nor claimed tested.
 
-```powershell
-Get-Content -LiteralPath .env | ForEach-Object {
-    $line = $_.Trim()
-    if ($line.Length -eq 0 -or $line.StartsWith('#')) { return }
-    if ($line -notmatch '^([A-Z][A-Z0-9_]*)=(.*)$') { throw 'Invalid .env line; expected KEY=value or a comment.' }
-    [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
-}
+## 2. Build and test before granting access
+
+```sh
+mvn -B -ntp verify
+mvn -B -ntp dependency:tree -DoutputType=json -DoutputFile=target/dependencies.json
+python3 scripts/audit_dependencies.py target/dependencies.json
 ```
 
-The explicit import also covers samples that do not load dotenv files themselves. Node scripts and Go/Python dotenv helpers may additionally read the same repository-local `.env`.
+Default tests use mocks, fixture files and a bounded closed-loopback Mongo failure; no Azure resources, cloud credentials or model calls are used. The OSV audit sends public Maven package coordinates only and fails closed if the audit is unavailable or reports vulnerabilities. It covers resolved application **and test** dependencies, not the JDK, Maven plugins or an absolute security guarantee.
 
-For an interactive passwordless run, sign in to the intended Azure identity with `az login`; confirm the resource permissions and database identity independently.
+## 3. Configure only the approved target
 
-### 3. Install/build when you are ready
+The application reads **process environment variables**; it does not automatically load or execute `.env`. `.env.example` is a placeholder-only reference. Never commit credentials or shell transcripts containing them.
 
-```powershell
-mvn compile
+Required settings:
+
+| Variable | Meaning |
+| --- | --- |
+| `DOCUMENTDB_HOST` | Exact SRV host, e.g. `<cluster>.global.mongocluster.cosmos.azure.com`; no scheme, port or URI options |
+| `DOCUMENTDB_DATABASE` | Explicit database, letters/digits/underscore, starts with a letter, max 48 characters |
+| `DOCUMENTDB_COLLECTION_PREFIX` | Explicit prefix, same name restrictions; nine suffixes are appended |
+| `ALLOW_DATABASE_WRITES` | Exactly `true` |
+| `DOCUMENTDB_AUTH` | Exactly `native` or `oidc` |
+| `DOCUMENTDB_USERNAME`, `DOCUMENTDB_PASSWORD` | Native auth only; **unset both** for OIDC |
+| `DATA_FILE_WITH_VECTORS` | Local path to the document JSON array |
+| `QUERY_VECTOR_FILE` | Local path to a JSON numeric array |
+
+Optional settings: `EMBEDDED_FIELD=DescriptionVector`, `EMBEDDING_DIMENSIONS=1536` (2–2000), `TOP_K=5` (1–100 and no larger than fixture size), `OPERATION_TIMEOUT_SECONDS=20` (1–60), `SEARCH_ATTEMPTS=4` (1–6), `SEARCH_RETRY_DELAY_MS=1000` (0–5000). Empty, malformed or out-of-range values fail; the first five variables above have **no defaults**. Input files must be valid, bounded JSON; vectors must have the configured dimension, finite numeric components and nonzero finite norms; HotelId values must be unique.
+
+POSIX shell example (substitute the approved resource; set passwords via your secret manager):
+
+```sh
+export DOCUMENTDB_HOST='<approved-cluster>.global.mongocluster.cosmos.azure.com'
+export DOCUMENTDB_DATABASE='approved_disposable_database'
+export DOCUMENTDB_COLLECTION_PREFIX='native_comparison'
+export ALLOW_DATABASE_WRITES=true DOCUMENTDB_AUTH=native
+export DATA_FILE_WITH_VECTORS="$PWD/data/Hotels_Vector.json"
+export QUERY_VECTOR_FILE="$PWD/data/query-vector.json"
+# Set DOCUMENTDB_USERNAME / DOCUMENTDB_PASSWORD securely, not in committed files.
 ```
 
-### 4. Run only against the approved disposable environment
+For OIDC, set `DOCUMENTDB_AUTH=oidc`, unset the native credential variables, and authenticate the intended Azure identity. `DefaultAzureCredential` supports Azure CLI and configured workload/managed identity. Choose the intended credential explicitly where appropriate (for example the SDK's `AZURE_TOKEN_CREDENTIALS` setting); avoid ambiguous ambient identities. The callback always requests `https://ossrdbms-aad.database.windows.net/.default`, never a server-provided audience, and passes a positive remaining token lifetime to MongoDB's driver. Expired/near-expiry tokens fail. Azure public authority is fixed. Azure Identity has no `close()` method in the pinned release; the application owns/closes its HTTP transport and credential executor as well as MongoDB on success and failure. No redirects or HTTP-level automatic retries are enabled on the credential transport.
 
-```powershell
-mvn exec:java -Pcompare
+## 4. Run
+
+Preferred standalone process (POSIX):
+
+```sh
+mvn -B -ntp dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+java -cp "target/classes:$(cat target/classpath.txt)" com.azure.documentdb.selectalgorithm.Main
 ```
 
-This compares search behavior on a small fixture, not production-scale performance. All nine combinations are attempted; use a tier supporting all three algorithms. Precomputed document vectors do not eliminate the live query-embedding call.
+PowerShell: replace the last command with:
 
-## Shared provisioning
+```powershell
+java -cp "target/classes;$((Get-Content -Raw target/classpath.txt).Trim())" com.azure.documentdb.selectalgorithm.Main
+```
 
-Provisioning remains [upstream](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/infra), not duplicated here. If you choose azd, use a separate checkout of the [upstream repository root](https://github.com/Azure-Samples/documentdb-samples/blob/f5a2675bbf349737234d0391e3ebee24b260e06f/README.md), not this sample directory.
-Review and harden its broad firewall/admin defaults and fallback administrator password before any deployment. No infrastructure, cloud credentials, GitHub Actions workflows, or automatic deployments are included in this extraction.
+`mvn -B -ntp exec:java -Pcompare` and `com.azure.documentdb.selectalgorithm.CompareAll` remain compatibility entrypoints. Prefer the standalone process for automation and process-lifetime checks.
 
-## Maintenance and license
+Each of the nine cases emits one JSON line containing status, algorithm, metric, collection, independently verified fixture/total counts, inserted count, index reuse, and returned IDs/raw scores on success. Errors emit a safe stage and error category/code, **not credentials, raw exception messages or stack traces**. A failing case does not prevent later cases from being attempted. Empty, incomplete, missing-score or nonfinite-score results fail, never masquerade as score zero. Scores are displayed without sorting/ranking different metrics against one another.
 
-This is a standalone downstream snapshot, not a GitHub fork of the complete monorepo. Upstream fixes must be reviewed and ported manually; update the recorded revision in [UPSTREAM.md](UPSTREAM.md) when doing so.
-Dependencies and sample algorithms are retained from the pinned source. Static extraction checks do not certify dependency compatibility, authentication, deployment, or model behavior.
+Exit codes: **0 = all nine pass**, **1 = any case/connection/shutdown failure**, **2 = invalid configuration or fixture before connecting**. Mongo operations, server selection, credential acquisition and search retries are bounded. Nine sequential failures can still take several minutes at the configured timeouts; an external job timeout remains recommended. There is no unbounded retry loop.
 
-Sample code is Copyright (c) Microsoft Corporation, under the preserved [MIT license](LICENSE.md). Dataset source/terms remain linked in the data guide.
+## Explicit Azure integration gate
+
+After independently authorizing the resources and the settings above:
+
+```sh
+RUN_AZURE_INTEGRATION=true mvn -B -ntp -Pintegration verify
+```
+
+Selecting the integration profile **without** the exact opt-in fails the test; it never silently skips/passes. It runs all nine combinations, then checks rerun idempotence and actual indexes/counts. Run it separately with native and OIDC credentials/prefixes. Default CI does not activate this profile, supply secrets, provision resources or change repository visibility. Live Azure compatibility and service-tier behavior require a recorded successful run on the exact code revision; local mock tests are not that evidence.
+
+## Maintenance
+
+Dependencies/plugins are pinned and the read-only GitHub Actions workflow builds, tests and audits without cloud access. Review upstream fixes manually, preserve attribution, and update [UPSTREAM.md](UPSTREAM.md) for local changes. Shared provisioning remains [upstream](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/infra); inspect costs, firewall scope and security defaults before any deployment.
+
+## Dated validation
+
+See [TESTED.md](TESTED.md) for the real managed-Azure results, authentication/algorithm matrix, local checks and explicit limits.
