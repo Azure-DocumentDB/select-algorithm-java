@@ -15,7 +15,13 @@ Source is at repository root. The README is rewritten for that layout, and place
 
 Hotel fixtures are not redistributed: [data/README.md](data/README.md) pins the original input locations and checksums. Saved output, Learn-only quickstart pages, and devcontainer automation are omitted. Shared infrastructure and root monorepo CI are not copied.
 
-No dependency versions or vector/agent algorithms are intentionally changed. The Go agent module namespace and local data/environment-file paths are adjusted where necessary. Invalid monorepo-only npm entry points are removed rather than advertised as working commands.
+### 2026-10-12 safe comparison adaptation
+
+- Updated Java target to 21 and pinned current MongoDB/Azure Identity/HTTP transport dependencies and Maven/test plugins; removed Azure OpenAI dependency and live model calls.
+- Replaced destructive single-collection resets/index swaps with nine explicitly named insert-only collections; added deterministic fixture IDs, exact content/index conflict validation, and independent fixture counts.
+- Added explicit target/write consent, native SCRAM-SHA-256 and Entra OIDC (fixed scope and actual expiry), strict TLS/destination validation, bounded operations/retries and owned transport cleanup.
+- Added precomputed query-file workflow, accurate per-case/aggregate failure status, safe errors, unit/mock/CLI tests, a fail-closed opt-in Azure integration profile, and read-only build/test/public OSV audit CI.
+- Kept the upstream IVF/HNSW/DiskANN index settings and COS/L2/IP search combinations. Removed cross-metric score-difference ranking implications. No benchmark, live model, or unrecorded Azure success is claimed.
 
 ## Maintenance
 
