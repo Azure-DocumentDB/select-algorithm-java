@@ -103,3 +103,7 @@ Selecting the integration profile **without** the exact opt-in fails the test; i
 ## Maintenance
 
 Dependencies/plugins are pinned and the read-only GitHub Actions workflow builds, tests and audits without cloud access. Review upstream fixes manually, preserve attribution, and update [UPSTREAM.md](UPSTREAM.md) for local changes. Shared provisioning remains [upstream](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/infra); inspect costs, firewall scope and security defaults before any deployment.
+
+## Dated validation
+
+See [TESTED.md](TESTED.md) for the real managed-Azure results, authentication/algorithm matrix, local checks and explicit limits.
